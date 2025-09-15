@@ -1,7 +1,14 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
+import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
+import L from 'leaflet';
+import 'leaflet-routing-machine';
+import 'leaflet.heat'; // Import for side effects
+import { useMap } from 'react-leaflet';
+import { useQuery } from "convex/react";
 
 interface Pandal {
   _id: Id<"pandals">;
@@ -14,11 +21,51 @@ interface Pandal {
   festivalType: string;
 }
 
-interface PandalMapProps {
+export interface PandalMapProps {
   pandals: Pandal[];
+  externalRoutePandalIds?: Id<"pandals">[];
+  setMapRoutePandalIds?: React.Dispatch<React.SetStateAction<Id<"pandals">[]>>;
+  setRouteItinerary?: React.Dispatch<React.SetStateAction<any | null>>;
+  selectedPandalForMap?: Id<"pandals"> | null; // Added this prop
+  setSelectedPandalForMap?: React.Dispatch<React.SetStateAction<Id<"pandals"> | null>>; // Added this prop
 }
 
-export function PandalMap({ pandals }: PandalMapProps) {
+// Custom Heatmap Layer Component
+interface CustomHeatmapLayerProps {
+  points: [number, number, number][]; // [lat, lng, intensity]
+  options?: L.HeatLayerOptions;
+}
+
+function CustomHeatmapLayer({ points, options }: CustomHeatmapLayerProps) {
+  const map = useMap();
+  const heatLayerRef = useRef<L.HeatLayer | null>(null);
+
+  useEffect(() => {
+    if (!map) return;
+
+    if (!heatLayerRef.current) {
+      heatLayerRef.current = (L.heatLayer as any)(points, options).addTo(map);
+    } else {
+      heatLayerRef.current.setLatLngs(points);
+      if (options) {
+        // Need to clear and re-add if options change, or update properties manually
+        map.removeLayer(heatLayerRef.current);
+        heatLayerRef.current = (L.heatLayer as any)(points, options).addTo(map);
+      }
+    }
+
+    return () => {
+      if (heatLayerRef.current) {
+        map.removeLayer(heatLayerRef.current);
+        heatLayerRef.current = null;
+      }
+    };
+  }, [map, points, options]);
+
+  return null;
+}
+
+export function PandalMap({ pandals, externalRoutePandalIds, setMapRoutePandalIds, setRouteItinerary, selectedPandalForMap, setSelectedPandalForMap }: PandalMapProps) {
   const [selectedPandal, setSelectedPandal] = useState<Pandal | null>(null);
   const [filterLevel, setFilterLevel] = useState<string>("all");
   const [routeMode, setRouteMode] = useState(false);
@@ -27,6 +74,88 @@ export function PandalMap({ pandals }: PandalMapProps) {
   const [showRoutePreview, setShowRoutePreview] = useState(false);
   
   const createRoute = useMutation(api.routes.create);
+  const crowdDataForHeatmap = useQuery(api.crowdData.getLatestCrowdDataForAllPandals);
+
+  const mapRef = useRef<L.Map>(null);
+  const routingControlRef = useRef<L.Routing.Control | null>(null);
+
+  // Log pandal locations for debugging
+  useEffect(() => {
+    if (pandals.length > 0) {
+      console.log("All Pandals and their locations:", pandals.map(p => ({ name: p.name, lat: p.location.lat, lng: p.location.lng })));
+      const bagbazar = pandals.find(p => p.name === "Bagbazar Sarbojanin");
+      if (bagbazar) {
+        console.log("Bagbazar Sarbojanin Location:", `Lat: ${bagbazar.location.lat}, Lng: ${bagbazar.location.lng}`);
+      }
+    }
+  }, [pandals]);
+
+  useEffect(() => {
+    if (!mapRef.current || !externalRoutePandalIds || !routeMode) {
+      if (routingControlRef.current) {
+        mapRef.current?.removeControl(routingControlRef.current);
+        routingControlRef.current = null;
+        setRouteItinerary?.(null);
+      }
+      return;
+    }
+
+    const routePandals = externalRoutePandalIds.map(id =>
+      pandals.find(p => p._id === id)
+    ).filter(Boolean);
+
+    if (routePandals.length < 2) {
+      if (routingControlRef.current) {
+        mapRef.current?.removeControl(routingControlRef.current);
+        routingControlRef.current = null;
+        setRouteItinerary?.(null);
+      }
+      return;
+    }
+
+    const waypoints = routePandals.map(pandal => L.latLng(pandal!.location.lat, pandal!.location.lng));
+
+    if (routingControlRef.current) {
+      routingControlRef.current.setWaypoints(waypoints);
+    } else {
+      const routingControl = L.Routing.control({
+        waypoints: waypoints,
+        routeWhileDragging: true,
+        show: false, // Don't show the default itinerary panel
+        addWaypoints: false,
+        fitSelectedRoutes: true,
+        lineOptions: {
+          styles: [
+            { color: 'black', opacity: 0.6, weight: 9 }, // Border
+            { color: '#3B82F6', opacity: 1, weight: 5 } // Main route
+          ]
+        }
+      }).addTo(mapRef.current);
+
+      routingControl.on('routesfound', (e) => {
+        const routes = e.routes;
+        if (routes && routes.length > 0) {
+          const summary = routes[0].summary;
+          const instructions = routes[0].instructions.map((instruction: any) => ({ // Explicitly type instruction as any
+            text: instruction.text,
+            distance: instruction.distance,
+            time: instruction.time,
+          }));
+          setRouteItinerary?.({ summary, instructions });
+        }
+      });
+
+      routingControlRef.current = routingControl;
+    }
+
+    return () => {
+      if (routingControlRef.current) {
+        mapRef.current?.removeControl(routingControlRef.current);
+        routingControlRef.current = null;
+        setRouteItinerary?.(null);
+      }
+    };
+  }, [mapRef, externalRoutePandalIds, pandals, routeMode, setRouteItinerary]);
 
   const getCrowdColor = (level: string) => {
     switch (level) {
@@ -54,10 +183,15 @@ export function PandalMap({ pandals }: PandalMapProps) {
 
   const handlePandalClick = (pandal: Pandal) => {
     if (routeMode) {
-      if (selectedRoute.includes(pandal._id)) {
-        setSelectedRoute(prev => prev.filter(id => id !== pandal._id));
-      } else {
-        setSelectedRoute(prev => [...prev, pandal._id]);
+      const currentRoute = externalRoutePandalIds !== undefined ? externalRoutePandalIds : selectedRoute;
+      const setter = externalRoutePandalIds !== undefined ? setMapRoutePandalIds : setSelectedRoute;
+
+      if (setter) {
+        if (currentRoute.includes(pandal._id)) {
+          setter(prev => prev.filter(id => id !== pandal._id));
+        } else {
+          setter(prev => [...prev, pandal._id]);
+        }
       }
     } else {
       setSelectedPandal(pandal);
@@ -84,91 +218,71 @@ export function PandalMap({ pandals }: PandalMapProps) {
   };
 
   const getRouteOrder = (pandalId: Id<"pandals">) => {
-    return selectedRoute.indexOf(pandalId) + 1;
-  };
-
-  const drawRouteLine = () => {
-    if (selectedRoute.length < 2) return null;
-    
-    const routePandals = selectedRoute.map(id => 
-      filteredPandals.find(p => p._id === id)
-    ).filter(Boolean);
-
-    const pathPoints = routePandals.map((pandal, index) => {
-      const x = 20 + (filteredPandals.indexOf(pandal!) % 8) * 10;
-      const y = 20 + Math.floor(filteredPandals.indexOf(pandal!) / 8) * 15;
-      return `${x},${y}`;
-    }).join(' ');
-
-    return (
-      <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 1 }}>
-        <polyline
-          points={pathPoints}
-          fill="none"
-          stroke="#3B82F6"
-          strokeWidth="3"
-          strokeDasharray="5,5"
-          className="animate-pulse"
-        />
-      </svg>
-    );
+    const routeToCheck = externalRoutePandalIds && routeMode ? externalRoutePandalIds : selectedRoute;
+    return routeToCheck.indexOf(pandalId) + 1;
   };
 
   return (
     <div className="h-full flex">
       {/* Map Area */}
-      <div className="flex-1 bg-gradient-to-br from-blue-50 to-green-50 relative overflow-hidden">
-        {/* Simulated Map Background */}
-        <div className="absolute inset-0 opacity-20">
-          <div className="w-full h-full bg-gradient-to-br from-green-200 via-blue-200 to-purple-200"></div>
-          {/* Grid lines to simulate map */}
-          <div className="absolute inset-0" style={{
-            backgroundImage: `
-              linear-gradient(rgba(0,0,0,0.1) 1px, transparent 1px),
-              linear-gradient(90deg, rgba(0,0,0,0.1) 1px, transparent 1px)
-            `,
-            backgroundSize: '50px 50px'
-          }}></div>
-        </div>
+      <div className="flex-1 relative overflow-hidden">
+        <MapContainer center={[22.5726, 88.3639]} zoom={12} scrollWheelZoom={true} className="h-full w-full" ref={mapRef}> {/* Changed zoom from 13 to 12 */}
+          <TileLayer
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          />
+          
+          {/* Heatmap Layer */}
+          {crowdDataForHeatmap && crowdDataForHeatmap.length > 0 && (
+            <CustomHeatmapLayer 
+              points={crowdDataForHeatmap.map(data => [data.lat, data.lng, data.intensity]) as [number, number, number][]}
+              options={{ radius: 25, blur: 15, max: 1.0 }}
+            />
+          )}
 
-        {/* Route Lines */}
-        {routeMode && showRoutePreview && drawRouteLine()}
+          {/* Route Lines handled by leaflet-routing-machine */}
 
-        {/* Pandal Markers */}
-        <div className="absolute inset-0 p-8" style={{ zIndex: 2 }}>
-          {filteredPandals.map((pandal, index) => {
-            const isInRoute = selectedRoute.includes(pandal._id);
+          {/* Pandal Markers */}
+          {filteredPandals.map((pandal) => {
+            const isInRoute = (routeMode && selectedRoute.includes(pandal._id)) || (externalRoutePandalIds && externalRoutePandalIds.includes(pandal._id));
+            const isSelected = selectedPandalForMap === pandal._id; // Check if this pandal should be specifically highlighted
             const routeOrder = getRouteOrder(pandal._id);
             
+            const customIcon = L.divIcon({
+              className: `custom-pandal-icon ${isInRoute ? 'bg-blue-600 ring-4 ring-blue-300' : getCrowdColor(pandal.crowdLevel)} ${isSelected ? 'ring-4 ring-purple-500 animate-pulse-subtle-once' : ''}`,
+              html: `
+                <div class="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold shadow-lg ">
+                  ${isInRoute ? `<span class="text-sm font-bold">${routeOrder}</span>` : `<span class="text-xs">${getCrowdIcon(pandal.crowdLevel)}</span>`}
+                </div>
+                <div class="absolute -bottom-6 left-1/2 -translate-x-1/2 bg-white px-2 py-1 rounded shadow text-xs whitespace-nowrap z-50">
+                  ${pandal.name}
+                  ${isInRoute ? `<span class="ml-1 text-blue-600 font-bold">#${routeOrder}</span>` : ''}
+                </div>
+              `,
+              iconSize: [40, 40],
+              iconAnchor: [20, 40],
+              popupAnchor: [0, -40],
+            });
+
             return (
-              <div
+              <Marker
                 key={pandal._id}
-                className="absolute cursor-pointer transform -translate-x-1/2 -translate-y-1/2"
-                style={{
-                  left: `${20 + (index % 8) * 10}%`,
-                  top: `${20 + Math.floor(index / 8) * 15}%`,
+                position={[pandal.location.lat, pandal.location.lng]}
+                icon={customIcon}
+                eventHandlers={{
+                  click: () => handlePandalClick(pandal),
                 }}
-                onClick={() => handlePandalClick(pandal)}
               >
-                <div className={`w-10 h-10 rounded-full ${
-                  isInRoute ? 'bg-blue-600 ring-4 ring-blue-300' : getCrowdColor(pandal.crowdLevel)
-                } flex items-center justify-center text-white font-bold shadow-lg hover:scale-110 transition-all duration-200 ${
-                  routeMode ? 'hover:ring-4 hover:ring-blue-200' : ''
-                }`}>
-                  {isInRoute ? (
-                    <span className="text-sm font-bold">{routeOrder}</span>
-                  ) : (
-                    <span className="text-xs">{getCrowdIcon(pandal.crowdLevel)}</span>
-                  )}
-                </div>
-                <div className="absolute top-12 left-1/2 transform -translate-x-1/2 bg-white px-2 py-1 rounded shadow text-xs whitespace-nowrap">
-                  {pandal.name}
-                  {isInRoute && <span className="ml-1 text-blue-600 font-bold">#{routeOrder}</span>}
-                </div>
-              </div>
+                <Popup>
+                  <div className="font-bold text-lg mb-1">{pandal.name}</div>
+                  <div className={`capitalize font-medium ${getCrowdColor(pandal.crowdLevel).replace('bg', 'text')}`}>{pandal.crowdLevel} Crowd</div>
+                  <div className="text-sm text-gray-600 mt-1">Current: {pandal.currentCrowd}/{pandal.capacity}</div>
+                  <div className="text-xs text-gray-500">{pandal.address}</div>
+                </Popup>
+              </Marker>
             );
           })}
-        </div>
+        </MapContainer>
 
         {/* Route Mode Controls */}
         {routeMode && (

@@ -1,19 +1,25 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import { PandalMap } from "./PandalMap";
+import { Id } from "../../convex/_generated/dataModel";
+import { PandalMap, PandalMapProps } from "./PandalMap";
 import { CrowdStats } from "./CrowdStats";
 import { AlertPanel } from "./AlertPanel";
-import { RoutePanel } from "./RoutePanel";
+import { RoutePanel, RoutePanelProps } from "./RoutePanel";
 import { CameraPanel } from "./CameraPanel";
 
 export function CrowdDashboard() {
   const [activeTab, setActiveTab] = useState<"map" | "routes" | "alerts" | "camera">("map");
   const pandals = useQuery(api.pandals.list, {}) || [];
   const crowdStats = useQuery(api.pandals.getCrowdStats);
+  // The activeAlerts now include pandal data
   const activeAlerts = useQuery(api.alerts.getActiveAlerts) || [];
   const initializeSampleData = useMutation(api.sampleData.initializeSampleData);
   const simulateCrowdUpdates = useAction(api.crowdData.simulateCrowdUpdates);
+  const [mapRoutePandalIds, setMapRoutePandalIds] = useState<Id<"pandals">[]>([]);
+  const [routeItinerary, setRouteItinerary] = useState<any | null>(null);
+  const [selectedPandalForMap, setSelectedPandalForMap] = useState<Id<"pandals"> | null>(null); // New state for linking alerts to map
+  const initializeSampleAlerts = useMutation(api.sampleData.initializeSampleAlerts); // New mutation call
 
   // Initialize sample data on first load
   useEffect(() => {
@@ -45,6 +51,13 @@ export function CrowdDashboard() {
       {/* Stats Bar */}
       <div className="bg-white border-b p-4">
         <CrowdStats stats={crowdStats} />
+        {/* Temporary button to initialize sample alerts */}
+        <button
+          onClick={() => initializeSampleAlerts()}
+          className="ml-4 px-3 py-1 bg-purple-600 text-white text-sm rounded hover:bg-purple-700 transition-colors"
+        >
+          Initialize Sample Alerts (Temporary)
+        </button>
       </div>
 
       {/* Tab Navigation */}
@@ -74,10 +87,10 @@ export function CrowdDashboard() {
 
       {/* Content Area */}
       <div className="flex-1 overflow-hidden">
-        {activeTab === "map" && <PandalMap pandals={pandals} />}
-        {activeTab === "routes" && <RoutePanel pandals={pandals} />}
+        {activeTab === "map" && <PandalMap {...{pandals, externalRoutePandalIds: mapRoutePandalIds, setMapRoutePandalIds, setRouteItinerary, selectedPandalForMap, setSelectedPandalForMap}} />}
+        {activeTab === "routes" && <RoutePanel {...{pandals, setMapRoutePandalIds, routeItinerary}} />}
         {activeTab === "camera" && <CameraPanel pandals={pandals} />}
-        {activeTab === "alerts" && <AlertPanel alerts={activeAlerts} />}
+        {activeTab === "alerts" && <AlertPanel alerts={activeAlerts} onSelectPandalForMap={setSelectedPandalForMap} onSetActiveTab={setActiveTab} />}
       </div>
     </div>
   );

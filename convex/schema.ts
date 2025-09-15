@@ -51,9 +51,11 @@ const applicationTables = {
     estimatedTime: v.number(), // in minutes
     status: v.union(v.literal("planned"), v.literal("active"), v.literal("completed")),
     createdAt: v.number(),
+    shareableId: v.optional(v.string()),
   })
     .index("by_user", ["userId"])
-    .index("by_status", ["status"]),
+    .index("by_status", ["status"])
+    .index("by_shareable_id", ["shareableId"]), // Add index for shareableId
 
   alerts: defineTable({
     pandalId: v.id("pandals"),

@@ -12,10 +12,16 @@
   },
   "dependencies": {
     "@convex-dev/auth": "^0.0.80",
+    "@tensorflow-models/coco-ssd": "^2.2.3",
+    "@tensorflow/tfjs": "^4.22.0",
     "clsx": "^2.1.1",
     "convex": "^1.24.2",
+    "leaflet": "^1.9.4",
+    "leaflet-routing-machine": "^3.2.12",
+    "leaflet.heat": "^0.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-leaflet": "^5.0.0",
     "sonner": "^2.0.3",
     "tailwind-merge": "^3.1.0"
   },

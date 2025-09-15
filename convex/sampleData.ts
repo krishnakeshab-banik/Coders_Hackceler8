@@ -98,3 +98,61 @@ export const initializeSampleData = mutation({
     return `Initialized ${samplePandals.length} sample pandals`;
   },
 });
+
+export const initializeSampleAlerts = mutation({
+  args: {},
+  handler: async (ctx) => {
+    // Check if sample alerts already exist to prevent duplicates
+    const existingAlert = await ctx.db.query("alerts").first();
+    if (existingAlert) return "Sample alerts already initialized.";
+
+    const pandals = await ctx.db.query("pandals").collect();
+    if (pandals.length === 0) return "No pandals available to create alerts for.";
+
+    const alertsToInsert = [
+      {
+        pandalId: pandals[0]._id, // Use the first available pandal
+        type: "overcrowding" as "overcrowding",
+        severity: "critical" as "critical",
+        message: "Critical overcrowding detected at main entrance.",
+        timestamp: Date.now() - 3600000, // 1 hour ago
+        isResolved: false,
+        notificationsSent: false,
+      },
+      {
+        pandalId: pandals[1]._id, // Use the second available pandal
+        type: "fight" as "fight",
+        severity: "high" as "high",
+        message: "Fight reported near food stalls.",
+        timestamp: Date.now() - 7200000, // 2 hours ago
+        isResolved: false,
+        notificationsSent: false,
+      },
+      {
+        pandalId: pandals[0]._id, // Use the first available pandal again
+        type: "emergency" as "emergency",
+        severity: "medium" as "medium",
+        message: "Minor medical emergency at exit gate.",
+        timestamp: Date.now() - 10800000, // 3 hours ago
+        isResolved: true,
+        notificationsSent: true,
+        resolvedAt: Date.now() - 7200000,
+      },
+      {
+        pandalId: pandals[2]._id, // Use the third available pandal
+        type: "overcrowding" as "overcrowding",
+        severity: "low" as "low",
+        message: "Crowd density slightly elevated in VIP section.",
+        timestamp: Date.now() - 1800000, // 30 minutes ago
+        isResolved: false,
+        notificationsSent: false,
+      },
+    ];
+
+    for (const alert of alertsToInsert) {
+      await ctx.db.insert("alerts", alert);
+    }
+
+    return `Initialized ${alertsToInsert.length} sample alerts.`;
+  },
+});

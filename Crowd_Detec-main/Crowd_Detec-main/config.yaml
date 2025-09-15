@@ -1,0 +1,52 @@
+# AI Crowd Detection Model Configuration
+
+model:
+  confidence_threshold: 0.5
+  device: "auto"  # cuda, cpu, or auto
+  model_path: "yolov8n.pt"  # Will be downloaded automatically
+  input_size: 640  # Model input resolution
+  max_det: 300  # Maximum detections per image
+
+video:
+  input_source: 0  # 0 for webcam, path for file, URL for IP camera
+  display_output: true
+  save_output: false
+  output_path: "output/"
+  target_fps: 30
+  resize_width: 1280
+  resize_height: 720
+
+crowd_analysis:
+  density_calculation: "bbox_coverage"  # bbox_coverage, spatial_distribution
+  smoothing_factor: 0.3  # For temporal smoothing of counts
+  alert_thresholds:
+    low: 20
+    medium: 50
+    high: 100
+  density_grid_size: [10, 10]  # Grid for density heatmap
+
+logging:
+  enable: true
+  format: "csv"  # csv, json
+  log_interval: 5  # seconds
+  log_path: "logs/"
+  save_images: false  # Save snapshots during alerts
+  image_interval: 30  # seconds
+
+alerts:
+  enable: true
+  email_notifications: false
+  email_config:
+    smtp_server: ""
+    smtp_port: 587
+    username: ""
+    password: ""
+    recipients: []
+  console_output: true
+  sound_alerts: false
+
+performance:
+  batch_size: 1
+  half_precision: false  # Use FP16 for faster inference
+  multi_threading: true
+  max_workers: 4

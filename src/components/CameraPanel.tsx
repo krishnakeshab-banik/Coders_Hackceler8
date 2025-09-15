@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from "react";
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
+import * as tf from "@tensorflow/tfjs";
+import * as cocoSsd from "@tensorflow-models/coco-ssd";
 
 interface Pandal {
   _id: Id<"pandals">;
@@ -24,18 +26,57 @@ export function CameraPanel({ pandals }: CameraPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const recordCrowdData = useMutation(api.crowdData.recordCrowdData);
+  const [latestAnomaly, setLatestAnomaly] = useState<string | undefined>(undefined);
+  const [model, setModel] = useState<cocoSsd.CocoSsd | null>(null);
+  const [currentCrowdCount, setCurrentCrowdCount] = useState(0);
+
+  // Automatically select Bagbazar Sarbojanin if available and keep its data updated
+  useEffect(() => {
+    const bagbazarPandal = pandals.find(p => p.name === "Bagbazar Sarbojanin");
+    if (bagbazarPandal) {
+      if (!selectedPandal || selectedPandal._id === bagbazarPandal._id) {
+        setSelectedPandal(bagbazarPandal);
+      }
+    } else if (!selectedPandal && pandals.length > 0) {
+      // If Bagbazar is not found, or not explicitly selected, and other pandals exist, pick the first one
+      setSelectedPandal(pandals[0]);
+    }
+  }, [pandals, selectedPandal]);
+
+  // Load the COCO-SSD model
+  useEffect(() => {
+    tf.ready().then(() => {
+      cocoSsd.load().then(loadedModel => {
+        setModel(loadedModel);
+        console.log("COCO-SSD model loaded.");
+      }).catch(error => console.error("Error loading COCO-SSD model:", error));
+    }).catch(error => console.error("Error preparing TensorFlow.js:", error));
+  }, []);
+
+  // Effect to handle camera stream assignment to video element
+  useEffect(() => {
+    if (cameraStream && videoRef.current) {
+      videoRef.current.srcObject = cameraStream;
+      videoRef.current.play().catch(error => {
+        console.error("Error attempting to play video from useEffect:", error);
+      });
+    }
+  }, [cameraStream]);
 
   // Start camera stream
   const startCamera = async () => {
+    if (!selectedPandal) {
+      alert("Please select a pandal to monitor.");
+      return;
+    }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
+      const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: 640, height: 480 },
-        audio: false 
+        audio: false
       });
+      console.log("Camera stream obtained:", stream);
       setCameraStream(stream);
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
+      setIsRecording(true); // Automatically start recording when camera starts
     } catch (error) {
       console.error("Error accessing camera:", error);
       alert("Unable to access camera. Please check permissions.");
@@ -48,50 +89,52 @@ export function CameraPanel({ pandals }: CameraPanelProps) {
       cameraStream.getTracks().forEach(track => track.stop());
       setCameraStream(null);
     }
+    setIsRecording(false);
+    setCurrentCrowdCount(0);
   };
 
-  // Simulate crowd detection from camera feed
-  const analyzeCrowdFromCamera = () => {
-    if (!selectedPandal || !videoRef.current || !canvasRef.current) return;
-
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    const video = videoRef.current;
-
-    if (ctx && video.videoWidth > 0) {
-      // Draw current video frame to canvas
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      ctx.drawImage(video, 0, 0);
-
-      // Simulate crowd detection (in real app, this would use AI/ML)
-      const simulatedPeopleCount = Math.floor(Math.random() * selectedPandal.capacity);
-      const crowdDensity = simulatedPeopleCount / 100; // Simplified density calculation
-      const anomalyDetected = Math.random() < 0.1; // 10% chance of anomaly
-
-      // Record the crowd data
-      recordCrowdData({
-        pandalId: selectedPandal._id,
-        peopleCount: simulatedPeopleCount,
-        crowdDensity,
-        queueLength: Math.floor(Math.random() * 20),
-        waitTime: Math.floor(Math.random() * 15),
-        anomalyDetected,
-        anomalyType: anomalyDetected ? "overcrowding" : undefined,
-      });
-    }
-  };
-
-  // Auto-analyze every 10 seconds when recording
+  // Crowd detection and data sending loop
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (isRecording && selectedPandal) {
-      interval = setInterval(analyzeCrowdFromCamera, 10000);
-    }
-    return () => {
-      if (interval) clearInterval(interval);
+    let animationFrameId: number;
+    let lastDetectionTime = 0;
+    const detectionInterval = 2000; // Send data every 2 seconds
+
+    const detectFrame = async () => {
+      if (model && videoRef.current && isRecording && selectedPandal) {
+        const video = videoRef.current;
+
+        if (video.readyState === 4) { // Ensure video is ready
+          const predictions = await model.detect(video);
+          const personCount = predictions.filter(p => p.class === "person").length;
+          setCurrentCrowdCount(personCount);
+
+          const currentTime = Date.now();
+          if (currentTime - lastDetectionTime > detectionInterval) {
+            lastDetectionTime = currentTime;
+            console.log(`Sending crowd data for ${selectedPandal.name}: ${personCount}`);
+            const crowdDensity = selectedPandal.capacity > 0 ? personCount / selectedPandal.capacity : 0;
+            recordCrowdData({
+              pandalId: selectedPandal._id,
+              peopleCount: personCount,
+              crowdDensity: crowdDensity,
+              anomalyDetected: false,
+              anomalyType: undefined, // Changed from null to undefined
+            });
+          }
+        }
+      }
+      animationFrameId = requestAnimationFrame(detectFrame);
     };
-  }, [isRecording, selectedPandal]);
+
+    if (isRecording && selectedPandal && model) {
+      animationFrameId = requestAnimationFrame(detectFrame);
+    }
+
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+    };
+  }, [model, isRecording, selectedPandal, recordCrowdData]);
+
 
   // Cleanup on unmount
   useEffect(() => {
@@ -148,11 +191,20 @@ export function CameraPanel({ pandals }: CameraPanelProps) {
               <div className="absolute bottom-4 left-4 bg-black/70 text-white p-3 rounded-lg">
                 <div className="text-sm font-medium mb-1">Live Analysis</div>
                 <div className="text-xs space-y-1">
-                  <div>Current Crowd: {selectedPandal.currentCrowd}</div>
+                  <div>Detected Crowd: {currentCrowdCount}</div>
                   <div>Capacity: {selectedPandal.capacity}</div>
                   <div className={`inline-block px-2 py-1 rounded text-xs ${getCrowdColor(selectedPandal.crowdLevel)}`}>
                     {selectedPandal.crowdLevel.toUpperCase()}
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* Anomaly Alert Overlay */}
+            {latestAnomaly && (latestAnomaly !== "overcrowding" || selectedPandal?.crowdLevel === "critical") && (
+              <div className="absolute inset-0 flex items-center justify-center bg-red-800/50 animate-pulse">
+                <div className="text-white text-3xl font-bold flex items-center gap-4">
+                  🚨 {latestAnomaly.toUpperCase()} DETECTED! 🚨
                 </div>
               </div>
             )}
@@ -165,10 +217,14 @@ export function CameraPanel({ pandals }: CameraPanelProps) {
               <p className="text-gray-300 mb-4">Start camera to begin crowd monitoring</p>
               <button
                 onClick={startCamera}
-                className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors"
+                disabled={!model || !selectedPandal}
+                className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Start Camera
+                {model ? "Start Camera" : "Loading AI Model..."}
               </button>
+              {!model && (
+                <p className="text-xs text-gray-400 mt-2">Please wait while the AI model loads...</p>
+              )}
             </div>
           </div>
         )}
@@ -188,11 +244,10 @@ export function CameraPanel({ pandals }: CameraPanelProps) {
                   <button
                     onClick={() => setIsRecording(!isRecording)}
                     disabled={!selectedPandal}
-                    className={`w-full py-2 px-4 rounded-lg font-medium transition-colors ${
-                      isRecording 
+                    className={`w-full py-2 px-4 rounded-lg font-medium transition-colors ${isRecording 
                         ? 'bg-red-600 text-white hover:bg-red-700' 
-                        : 'bg-green-600 text-white hover:bg-green-700'
-                    } disabled:opacity-50 disabled:cursor-not-allowed`}
+                        : 'bg-green-600 text-white hover:bg-green-700'}
+                     disabled:opacity-50 disabled:cursor-not-allowed`}
                   >
                     {isRecording ? '⏹️ Stop Recording' : '▶️ Start Recording'}
                   </button>
@@ -206,9 +261,10 @@ export function CameraPanel({ pandals }: CameraPanelProps) {
               ) : (
                 <button
                   onClick={startCamera}
-                  className="w-full py-2 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                  disabled={!model || !selectedPandal}
+                  className="w-full py-2 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  📷 Start Camera
+                  {model ? "Start Camera" : "Loading AI Model..."}
                 </button>
               )}
             </div>
@@ -226,11 +282,10 @@ export function CameraPanel({ pandals }: CameraPanelProps) {
               {pandals.map((pandal) => (
                 <div
                   key={pandal._id}
-                  className={`p-3 border rounded-lg cursor-pointer transition-colors ${
-                    selectedPandal?._id === pandal._id 
+                  className={`p-3 border rounded-lg cursor-pointer transition-colors ${selectedPandal?._id === pandal._id 
                       ? "border-blue-500 bg-blue-50" 
-                      : "hover:bg-gray-100"
-                  }`}
+                      : "hover:bg-gray-100"}
+                  `}
                   onClick={() => setSelectedPandal(pandal)}
                 >
                   <div className="flex items-center justify-between">
@@ -252,7 +307,7 @@ export function CameraPanel({ pandals }: CameraPanelProps) {
               <div className="space-y-2 text-sm">
                 <div><strong>Name:</strong> {selectedPandal.name}</div>
                 <div><strong>Address:</strong> {selectedPandal.address}</div>
-                <div><strong>Current Crowd:</strong> {selectedPandal.currentCrowd}/{selectedPandal.capacity}</div>
+                <div><strong>Current Crowd:</strong> {currentCrowdCount}/{selectedPandal.capacity} (Detected)</div>
                 <div className="flex items-center gap-2">
                   <strong>Status:</strong>
                   <span className={`px-2 py-1 rounded text-xs ${getCrowdColor(selectedPandal.crowdLevel)}`}>
@@ -267,11 +322,9 @@ export function CameraPanel({ pandals }: CameraPanelProps) {
           <div className="mt-4 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
             <h3 className="font-semibold text-yellow-800 mb-2">📋 Instructions</h3>
             <ul className="text-xs text-yellow-700 space-y-1">
-              <li>1. Select a pandal to monitor</li>
-              <li>2. Start the camera feed</li>
-              <li>3. Begin recording for crowd analysis</li>
-              <li>4. System will auto-detect crowd levels</li>
-              <li>5. Alerts will be generated for anomalies</li>
+              <li>1. Select a pandal to monitor.</li>
+              <li>2. Click "Start Camera" to begin crowd detection.</li>
+              <li>3. The system will auto-detect crowd levels and generate alerts.</li>
             </ul>
           </div>
         </div>

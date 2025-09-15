@@ -10,23 +10,43 @@ export const createAlert = internalMutation({
     message: v.string(),
   },
   handler: async (ctx, args) => {
-    return await ctx.db.insert("alerts", {
+    const alertId = await ctx.db.insert("alerts", {
       ...args,
       timestamp: Date.now(),
       isResolved: false,
       notificationsSent: false,
     });
+
+    // Simulate dispatch to authorities
+    console.log(`
+    🚨🚨🚨 ALERT DISPATCHED TO AUTHORITIES 🚨🚨🚨
+    Alert ID: ${alertId}
+    Pandal ID: ${args.pandalId}
+    Type: ${args.type.toUpperCase()}
+    Severity: ${args.severity.toUpperCase()}
+    Message: ${args.message}
+    Timestamp: ${new Date(Date.now()).toLocaleString()}
+    -----------------------------------------------
+    `);
+
+    return alertId;
   },
 });
 
 export const getActiveAlerts = query({
   args: {},
   handler: async (ctx) => {
-    return await ctx.db
+    const alerts = await ctx.db
       .query("alerts")
-      .withIndex("by_resolved", (q) => q.eq("isResolved", false))
       .order("desc")
       .collect();
+
+    const alertsWithPandal = await Promise.all(alerts.map(async (alert) => {
+      const pandal = await ctx.db.get(alert.pandalId);
+      return { alert, pandal };
+    }));
+
+    return alertsWithPandal.filter(item => item.pandal !== null);
   },
 });
 

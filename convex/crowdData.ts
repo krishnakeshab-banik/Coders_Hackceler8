@@ -45,6 +45,7 @@ export const recordCrowdData = mutation({
       });
     }
 
+    console.log(`Successfully recorded crowd data for Pandal ID: ${args.pandalId}, People: ${args.peopleCount}, Level: ${crowdLevel}`);
     return crowdDataId;
   },
 });
@@ -84,6 +85,61 @@ export const recordCrowdDataInternal = internalMutation({
   },
 });
 
+export const recordExternalCrowdData = internalMutation({
+  args: {
+    pandalId: v.id("pandals"),
+    peopleCount: v.number(),
+    crowdDensity: v.number(),
+    anomalyDetected: v.boolean(),
+    anomalyType: v.optional(v.string()),
+    // The HTTP action handler will only pass data it receives from external source,
+    // so queueLength and waitTime are optional here.
+    queueLength: v.optional(v.number()), 
+    waitTime: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    // Determine crowd level based on density
+    let crowdLevel: "low" | "medium" | "high" | "critical";
+    if (args.crowdDensity < 2) crowdLevel = "low";
+    else if (args.crowdDensity < 4) crowdLevel = "medium";
+    else if (args.crowdDensity < 6) crowdLevel = "high";
+    else crowdLevel = "critical";
+
+    // Record crowd data
+    const crowdDataId = await ctx.db.insert("crowdData", {
+      pandalId: args.pandalId,
+      peopleCount: args.peopleCount,
+      crowdDensity: args.crowdDensity,
+      queueLength: args.queueLength,
+      waitTime: args.waitTime,
+      anomalyDetected: args.anomalyDetected,
+      anomalyType: args.anomalyType,
+      timestamp: Date.now(),
+      crowdLevel,
+    });
+
+    // Update pandal crowd level
+    await ctx.db.patch(args.pandalId, {
+      currentCrowd: args.peopleCount,
+      crowdLevel,
+    });
+
+    // Check for alerts (similar to recordCrowdData)
+    if (crowdLevel === "critical" || args.anomalyDetected) {
+      await ctx.scheduler.runAfter(0, internal.alerts.createAlert, {
+        pandalId: args.pandalId,
+        type: args.anomalyDetected ? (args.anomalyType as any) || "emergency" : "overcrowding",
+        severity: "critical",
+        message: args.anomalyDetected 
+          ? `Anomaly detected: ${args.anomalyType}` 
+          : `Critical overcrowding detected with ${args.peopleCount} people`,
+      });
+    }
+
+    return crowdDataId;
+  },
+});
+
 export const getLatestCrowdData = query({
   args: { pandalId: v.id("pandals") },
   handler: async (ctx, args) => {
@@ -113,6 +169,31 @@ export const getCrowdHistory = query({
   },
 });
 
+export const getLatestCrowdDataForAllPandals = query({
+  handler: async (ctx) => {
+    const pandals = await ctx.db.query("pandals").withIndex("by_active", (q) => q.eq("isActive", true)).collect();
+    
+    const crowdDataPoints = await Promise.all(pandals.map(async (pandal) => {
+      const latestCrowdData = await ctx.db
+        .query("crowdData")
+        .withIndex("by_pandal", (q) => q.eq("pandalId", pandal._id))
+        .order("desc")
+        .first();
+
+      if (latestCrowdData) {
+        return {
+          lat: pandal.location.lat,
+          lng: pandal.location.lng,
+          intensity: latestCrowdData.crowdDensity,
+        };
+      }
+      return null;
+    }));
+
+    return crowdDataPoints.filter(Boolean);
+  },
+});
+
 // Simulate crowd data updates (for demo purposes)
 export const simulateCrowdUpdates = action({
   args: {},
@@ -128,7 +209,7 @@ export const simulateCrowdUpdates = action({
       
       // Random chance of anomaly
       const anomalyDetected = Math.random() < 0.05; // 5% chance
-      const anomalyTypes = ["fight", "stampede", "overcrowding"];
+      const anomalyTypes = ["fight", "stampede", "overcrowding", "fire"];
       const anomalyType = anomalyDetected ? anomalyTypes[Math.floor(Math.random() * anomalyTypes.length)] : undefined;
       
       await ctx.runMutation(internal.crowdData.recordCrowdDataInternal, {

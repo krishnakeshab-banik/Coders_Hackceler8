@@ -15,10 +15,18 @@ export const recordCrowdData = mutation({
   handler: async (ctx, args) => {
     // Determine crowd level based on density
     let crowdLevel: "low" | "medium" | "high" | "critical";
-    if (args.crowdDensity < 2) crowdLevel = "low";
-    else if (args.crowdDensity < 4) crowdLevel = "medium";
-    else if (args.crowdDensity < 6) crowdLevel = "high";
-    else crowdLevel = "critical";
+    // If anomaly is detected, force crowdLevel to critical for alert purposes
+    if (args.anomalyDetected) {
+      crowdLevel = "critical";
+    } else if (args.crowdDensity < 2) {
+      crowdLevel = "low";
+    } else if (args.crowdDensity < 4) {
+      crowdLevel = "medium";
+    } else if (args.crowdDensity < 6) {
+      crowdLevel = "high";
+    } else {
+      crowdLevel = "critical";
+    }
 
     // Record crowd data
     const crowdDataId = await ctx.db.insert("crowdData", {
@@ -40,12 +48,12 @@ export const recordCrowdData = mutation({
         type: args.anomalyDetected ? (args.anomalyType as any) || "emergency" : "overcrowding",
         severity: "critical",
         message: args.anomalyDetected 
-          ? `Anomaly detected: ${args.anomalyType}` 
+          ? `Anomaly detected: ${args.anomalyType?.toUpperCase() || "UNKNOWN"}` 
           : `Critical overcrowding detected with ${args.peopleCount} people`,
       });
     }
 
-    console.log(`Successfully recorded crowd data for Pandal ID: ${args.pandalId}, People: ${args.peopleCount}, Level: ${crowdLevel}`);
+    console.log(`Successfully recorded crowd data for Pandal ID: ${args.pandalId}, People: ${args.peopleCount}, Level: ${crowdLevel}, Anomaly: ${args.anomalyType || 'None'}`);
     return crowdDataId;
   },
 });

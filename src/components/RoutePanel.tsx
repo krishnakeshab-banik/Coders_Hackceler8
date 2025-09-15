@@ -154,6 +154,15 @@ export function RoutePanel({ pandals, setMapRoutePandalIds, routeItinerary }: Ro
     }
   };
 
+  const getDirectionIcon = (text: string) => {
+    text = text.toLowerCase();
+    if (text.includes("left")) return "⬅️";
+    if (text.includes("right")) return "➡️";
+    if (text.includes("arrive") || text.includes("destination")) return "🏁";
+    if (text.includes("straight") || text.includes("continue")) return "⬆️";
+    return "📍";
+  };
+
   return (
     <div className="h-full flex">
       {/* Route Builder */}
@@ -352,30 +361,6 @@ export function RoutePanel({ pandals, setMapRoutePandalIds, routeItinerary }: Ro
                   ))}
                 </div>
               </div>
-            </div>
-          </div>
-        )}
-
-        {/* Detailed Itinerary */}
-        {routeItinerary && (
-          <div className="mt-6 bg-white rounded-lg p-4 shadow">
-            <h4 className="font-semibold mb-3 text-lg">Detailed Directions ({ (routeItinerary.summary.totalDistance / 1000).toFixed(1)} km, { (routeItinerary.summary.totalTime / 60).toFixed(0)} min)</h4>
-            <div className="space-y-4">
-              {routeItinerary.instructions.map((step: any, index: number) => (
-                <div key={index} className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg border-l-4 border-blue-500 shadow-sm">
-                  <div className="flex-shrink-0 w-6 h-6 flex items-center justify-center bg-blue-500 text-white rounded-full text-xs font-bold mt-1">
-                    {index + 1}
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-medium text-gray-800">{step.text}</p>
-                    <p className="text-xs text-gray-500 mt-1">
-                      <span className="font-semibold">{(step.distance / 1000).toFixed(2)} km</span>
-                      <span className="mx-1">•</span>
-                      <span className="font-semibold">{(step.time / 60).toFixed(0)} min</span>
-                    </p>
-                  </div>
-                </div>
-              ))}
             </div>
           </div>
         )}

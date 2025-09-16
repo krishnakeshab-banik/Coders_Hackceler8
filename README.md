@@ -171,5 +171,3 @@ Contributions are welcome! Fork the repo, make improvements, and submit a pull r
 Licensed under the [MIT License](LICENSE).
 
 ---
-
-Would you like me to also design a **professional cover image/banner (with logo + tagline)** for the README so it stands out on GitHub?

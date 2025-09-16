@@ -66,6 +66,10 @@ With a **cool, user-friendly interface**, SmartCrowd works seamlessly for **visi
 
 <img width="1910" alt="Pandal List" src="https://github.com/user-attachments/assets/15dd0faa-3471-4bfd-be24-d3d71bf00b21" />  
 
+## Live Camera Crowd Count
+
+<img width="1910" height="1002" alt="screencapture-localhost-5174-2025-09-15-23_32_23" src="https://github.com/user-attachments/assets/4bb70fed-bf5a-4495-abdf-39d44652620e" />
+
 ---
 
 ##  Fire Detection Demo
